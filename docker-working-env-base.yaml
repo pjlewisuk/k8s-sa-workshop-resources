@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: This template deploys a VPC and an EC2 instance with Docker already installed, with the goal of standardizing the experience of the users for the Docker and k8s workshops.
+
+Parameters:
+  KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: The EC2 key pair to be used for SSHing into the instance
+
+Mappings:
+  RegionToAmiId:  # Amazon Linux 2
+    ap-northeast-1:
+      "AMI": "ami-052652af12b58691f"
+    ap-northeast-2:
+      "AMI": "ami-0db78afd3d150fc18"
+    ap-south-1:
+      "AMI": "ami-03b5297d565ef30a6"
+    ap-southeast-1:
+      "AMI": "ami-0cbc6aae997c6538a"
+    ap-southeast-2:
+      "AMI": "ami-08fdde86b93accf1c"
+    ca-central-1:
+      "AMI": "ami-0bf54ac1b628cf143"
+    eu-central-1:
+      "AMI": "ami-0ec1ba09723e5bfac"
+    eu-north-1:
+      "AMI": "ami-0f630db6194a81ad0"
+    eu-west-1:
+      "AMI": "ami-04d5cc9b88f9d1d39"
+    eu-west-2:
+      "AMI": "ami-0cb790308f7591fa6"
+    eu-west-3:
+      "AMI": "ami-07eda9385feb1e969"
+    sa-east-1:
+      "AMI": "ami-0b032e878a66c3b68"
+    us-east-1:
+      "AMI": "ami-0fc61db8544a617ed"
+    us-east-2:
+      "AMI": "ami-0e01ce4ee18447327"
+    us-west-1:
+      "AMI": "ami-09a7fe78668f1e2c0"
+    us-west-2:
+      "AMI": "ami-0ce21b51cb31a48b8"
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 192.168.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+
+  IGW:
+    Type: AWS::EC2::InternetGateway
+
+  IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref IGW
+      VpcId: !Ref VPC
+
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: !Ref AWS::Region
+      MapPublicIpOnLaunch: true
+      CidrBlock: 192.168.0.0/24
+      VpcId: !Ref VPC
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  RouteToInternet:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW
+      RouteTableId: !Ref RouteTable
+
+  RouteToInternetAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref Subnet
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the Docker/k8s workshop EC2 instance
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+      VpcId: !Ref VPC
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !FindInMap [RegionToAmiId, !Ref "AWS::Region", AMI]
+      InstanceType: t2.medium
+      KeyName: !Ref KeyPair
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      SubnetId: !Ref Subnet
+      Tags:
+        - Key: Name
+          Value: WorkshopInstance
+      UserData: !Base64 |
+        #!/bin/bash
+        yum update -y
+        amazon-linux-extras install -y docker
+        chkconfig docker on
+        usermod -a -G docker ec2-user
+        curl -L https://github.com/docker/compose/releases/download/1.22.0/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose
+        chmod +x /usr/local/bin/docker-compose
+        service docker restart
+
+Outputs:
+  Instance:
+    Value: !GetAtt Instance.PublicIp
+    Description: The public IP address of the instance from which the labs will be run.
